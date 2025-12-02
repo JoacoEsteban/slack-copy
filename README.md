@@ -1,5 +1,9 @@
 This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
 
+## What it does
+
+When you open Slack in the browser, the extension watches for message rows and injects a `Copy` button into the hover action bar. Clicking the button copies the visible message text to the clipboard and briefly flashes a confirmation label so you know it worked.
+
 ## Getting Started
 
 First, run the development server:
