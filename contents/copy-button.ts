@@ -1,11 +1,12 @@
 import { MessageCopier } from "./copy"
-import { CopyIcon } from "./icons"
+import { CopyIcon, Icon } from "./icons"
 import type { Logger } from "./logger"
 import { Popover } from "./popover"
 
 export class CopyButton {
   public readonly element: HTMLButtonElement
   public readonly icon = new CopyIcon()
+  public readonly loadingIcon = new Icon("loading-spinner")
   private readonly copier: MessageCopier
   private readonly popover: Popover
 
@@ -26,6 +27,8 @@ export class CopyButton {
     button.className =
       "c-button-unstyled c-icon_button c-icon_button--size_small c-message_actions__button c-icon_button--default"
     button.appendChild(this.icon.svg)
+    button.appendChild(this.loadingIcon.node)
+    this.loadingIcon.node.style.display = "none"
     return button
   }
 
@@ -39,8 +42,15 @@ export class CopyButton {
       return
     }
 
+    this.icon.svg.style.display = "none"
+    this.loadingIcon.node.style.display = ""
+
     const result = await this.copier.copy(messageRoot)
     this.log("Copy attempt finished", result)
+
+    this.icon.svg.style.display = ""
+    this.loadingIcon.node.style.display = "none"
+
     if (result.success) {
       this.popover.setText("Copied to clipboard")
       this.icon.setFilled(true)
