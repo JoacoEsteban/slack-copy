@@ -20,6 +20,7 @@ export async function copyMessageContent(
   messageRoot: HTMLElement,
   log: Logger
 ): Promise<CopyResult> {
+  log("will copy for message", messageRoot)
   const text = extractMessageText(messageRoot)
   const html = extractMessageHtml(messageRoot)
   const imageBlobs = await collectImageBlobs(messageRoot, log)
@@ -98,11 +99,15 @@ async function collectImageBlobs(
   root: HTMLElement,
   log: Logger
 ): Promise<Blob[]> {
-  const images = Array.from(root.querySelectorAll<HTMLImageElement>("img"))
+  const anchors = Array.from(
+    root.querySelectorAll<HTMLAnchorElement>(
+      "[data-qa=message_file_image_thumbnail]"
+    )
+  )
   const sources = Array.from(
     new Set(
-      images
-        .map((image) => image.currentSrc || image.src)
+      anchors
+        .map((image) => image.href)
         .filter((src): src is string => Boolean(src))
     )
   )
@@ -153,9 +158,11 @@ async function tryRichClipboardCopy(
   },
   log: Logger
 ): Promise<boolean> {
-  const clipboardItemCtor = (window as Window & {
-    ClipboardItem?: typeof ClipboardItem
-  }).ClipboardItem
+  const clipboardItemCtor = (
+    window as Window & {
+      ClipboardItem?: typeof ClipboardItem
+    }
+  ).ClipboardItem
 
   if (!clipboardItemCtor || typeof navigator.clipboard?.write !== "function") {
     log("Rich clipboard APIs not available")
