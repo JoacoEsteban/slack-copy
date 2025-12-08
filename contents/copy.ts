@@ -9,6 +9,7 @@ const MESSAGE_TEXT_SELECTORS = [
   ".c-message_kit__text",
   ".p-rich_text_section"
 ]
+const EDITED_LABEL_SELECTOR = ".c-message__edited_label"
 
 export type CopyResult = {
   success: boolean
@@ -87,30 +88,36 @@ export class MessageCopier {
   }
 
   private extractMessageText(root: HTMLElement): string | null {
-    const textFromSelector =
-      mapFind(
-        MESSAGE_TEXT_SELECTORS,
-        (selector) =>
-          root.querySelector<HTMLElement>(selector)?.innerText.trim(),
-        (text) => Boolean(text)
-      ) ?? null
-
-    const fallback = root.innerText.trim()
-    return textFromSelector || (fallback ? fallback : null)
+    const contentNode = this.selectMessageContent(root)
+    return (
+      this.extractInnerText(contentNode) || this.extractInnerText(root) || null
+    )
   }
 
   private extractMessageHtml(root: HTMLElement): string | null {
-    const candidate =
+    const clone = this.cloneForProcessing(this.selectMessageContent(root))
+    const html = clone.innerHTML.trim()
+    return html || null
+  }
+
+  private selectMessageContent(root: HTMLElement): HTMLElement {
+    return (
       mapFind(
         MESSAGE_TEXT_SELECTORS,
         (selector) => root.querySelector<HTMLElement>(selector),
         (node) => Boolean(node)
       ) ?? root
+    )
+  }
 
-    const clone = candidate.cloneNode(true) as HTMLElement
+  private extractInnerText(element: HTMLElement): string {
+    return this.cloneForProcessing(element).innerText.trim()
+  }
+
+  private cloneForProcessing(element: HTMLElement): HTMLElement {
+    const clone = element.cloneNode(true) as HTMLElement
     this.cleanupClone(clone)
-    const html = clone.innerHTML.trim()
-    return html || null
+    return clone
   }
 
   private cleanupClone(element: HTMLElement): void {
@@ -122,6 +129,10 @@ export class MessageCopier {
 
     Array.from(element.querySelectorAll("script")).forEach((node) =>
       node.remove()
+    )
+
+    Array.from(element.querySelectorAll(EDITED_LABEL_SELECTOR)).forEach(
+      (node) => node.remove()
     )
   }
 
