@@ -7,3 +7,22 @@ export function parseNode(html: string) {
 
   return node
 }
+
+export function parseElement(html: string) {
+  const node = parseNode(html)
+
+  if (!(node instanceof HTMLElement))
+    throw new Error("Parsed node is not an HTMLElement")
+
+  return node
+}
+
+export function assertElement(node?: Node | null) {
+  if (!node) throw new Error("Node is null")
+  if (!(node instanceof HTMLElement)) {
+    console.log(node)
+    throw new Error("Node is not an HTMLElement")
+  }
+
+  return node as HTMLElement
+}
