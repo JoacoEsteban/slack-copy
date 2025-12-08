@@ -1,4 +1,5 @@
-import { COPY_BUTTON_MARK, CopyButton } from "./copy-button"
+import { COPY_BUTTON_MARK } from "./constants"
+import { CopyButton } from "./copy-button"
 import type { Logger } from "./logger"
 
 const ACTION_CONTAINER_SELECTORS = [
