@@ -1,17 +1,6 @@
 import { assertElement, parseElement } from "./element"
 import { onNodeRemoved } from "./lib/on-node-removed"
-
-export function html(
-  strings: TemplateStringsArray,
-  ...values: unknown[]
-): string {
-  let out = ""
-  for (let i = 0; i < strings.length; i++) {
-    out += strings[i]
-    if (i < values.length) out += String(values[i])
-  }
-  return out
-}
+import { html } from "./lib/template"
 
 const popoverHtml = html`
   <div class="ReactModalPortal">
