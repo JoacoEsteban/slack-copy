@@ -14,7 +14,7 @@ export class CopyButton {
     const button = this.createElement()
     this.element = button
     this.copier = new MessageCopier(this.log)
-    this.element.addEventListener("click", (event) => this.handleClick(event))
+    this.element.addEventListener("click", () => this.handleClick())
   }
 
   private createElement() {
@@ -26,9 +26,7 @@ export class CopyButton {
     return button
   }
 
-  private async handleClick(event: MouseEvent): Promise<void> {
-    event.preventDefault()
-
+  private async handleClick(): Promise<void> {
     const messageRoot = this.findMessageRoot(this.container)
     if (!messageRoot) {
       this.log("No message root found", this.container)
