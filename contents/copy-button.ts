@@ -42,6 +42,9 @@ export class CopyButton {
 
   private findMessageRoot(start: HTMLElement): HTMLElement | null {
     return (
+      start.closest<HTMLElement>(
+        ".p-message_gallery_image_file.c-file_gallery_image_file"
+      ) ??
       start.closest<HTMLElement>('[data-qa="message_container"]') ??
       start.closest<HTMLElement>('[role="listitem"]') ??
       start.closest<HTMLElement>(".c-virtual_list__item")

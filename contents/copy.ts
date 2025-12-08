@@ -48,6 +48,7 @@ export class MessageCopier {
   constructor(private readonly log: Logger) {}
 
   public async copy(messageRoot: HTMLElement): Promise<CopyResult> {
+    this.log("Will attempt to copy content from", messageRoot)
     const payload = await this.buildPayload(messageRoot)
     const richResult = await this.tryRichClipboard(payload)
 
