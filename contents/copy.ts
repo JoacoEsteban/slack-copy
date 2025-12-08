@@ -1,4 +1,5 @@
 import { COPY_BUTTON_MARK } from "./constants"
+import { mapFind } from "./lib/map-find"
 import type { Logger } from "./logger"
 
 const MESSAGE_TEXT_SELECTORS = [
@@ -22,6 +23,13 @@ type ClipboardPayload = {
   imageBlobs: Blob[]
 }
 
+type PreparedClipboardData = {
+  data: Record<string, Blob>
+  textIncluded: boolean
+  htmlIncluded: boolean
+  imagesIncluded: number
+}
+
 type RichClipboardResult =
   | {
       success: true
@@ -31,269 +39,286 @@ type RichClipboardResult =
     }
   | { success: false }
 
-export async function copyMessageContent(
-  messageRoot: HTMLElement,
-  log: Logger
-): Promise<CopyResult> {
-  log("will copy for message", messageRoot)
-  const text = extractMessageText(messageRoot)
-  const html = extractMessageHtml(messageRoot)
-  const imageBlobs = await collectImageBlobs(messageRoot, log)
+type PreparedClipboardAccumulator = PreparedClipboardData & {
+  usedImageTypes: Set<string>
+}
 
-  const richCopyResult = await tryRichClipboardCopy(
-    { text, html, imageBlobs },
-    log
-  )
+export class MessageCopier {
+  constructor(private readonly log: Logger) {}
 
-  if (richCopyResult.success) {
-    return {
-      success: true,
-      textCopied: richCopyResult.textIncluded || richCopyResult.htmlIncluded,
-      imagesCopied: richCopyResult.imagesIncluded,
-      usedRichClipboard: true
+  public async copy(messageRoot: HTMLElement): Promise<CopyResult> {
+    const payload = await this.buildPayload(messageRoot)
+    const richResult = await this.tryRichClipboard(payload)
+
+    if (richResult.success) {
+      return {
+        success: true,
+        textCopied: richResult.textIncluded || richResult.htmlIncluded,
+        imagesCopied: richResult.imagesIncluded,
+        usedRichClipboard: true
+      }
     }
-  }
 
-  if (text) {
-    const textOnlySuccess = await copyPlainText(text, log)
+    if (payload.text) {
+      const textOnlySuccess = await this.copyPlainText(payload.text)
+      return {
+        success: textOnlySuccess,
+        textCopied: textOnlySuccess,
+        imagesCopied: 0,
+        usedRichClipboard: false
+      }
+    }
+
+    this.log("No copyable content found")
     return {
-      success: textOnlySuccess,
-      textCopied: textOnlySuccess,
+      success: false,
+      textCopied: false,
       imagesCopied: 0,
       usedRichClipboard: false
     }
   }
 
-  log("No copyable content found")
-  return {
-    success: false,
-    textCopied: false,
-    imagesCopied: 0,
-    usedRichClipboard: false
+  private async buildPayload(root: HTMLElement): Promise<ClipboardPayload> {
+    return {
+      text: this.extractMessageText(root),
+      html: this.extractMessageHtml(root),
+      imageBlobs: await this.collectImageBlobs(root)
+    }
   }
-}
 
-function extractMessageText(root: HTMLElement): string | null {
-  for (const selector of MESSAGE_TEXT_SELECTORS) {
-    const node = root.querySelector<HTMLElement>(selector)
-    if (node) {
-      const text = node.innerText.trim()
-      if (text) {
-        return text
+  private extractMessageText(root: HTMLElement): string | null {
+    const textFromSelector =
+      mapFind(
+        MESSAGE_TEXT_SELECTORS,
+        (selector) =>
+          root.querySelector<HTMLElement>(selector)?.innerText.trim(),
+        (text) => Boolean(text)
+      ) ?? null
+
+    const fallback = root.innerText.trim()
+    return textFromSelector || (fallback ? fallback : null)
+  }
+
+  private extractMessageHtml(root: HTMLElement): string | null {
+    const candidate =
+      mapFind(
+        MESSAGE_TEXT_SELECTORS,
+        (selector) => root.querySelector<HTMLElement>(selector),
+        (node) => Boolean(node)
+      ) ?? root
+
+    const clone = candidate.cloneNode(true) as HTMLElement
+    this.cleanupClone(clone)
+    const html = clone.innerHTML.trim()
+    return html || null
+  }
+
+  private cleanupClone(element: HTMLElement): void {
+    element.removeAttribute(COPY_BUTTON_MARK)
+
+    Array.from(element.querySelectorAll(`[${COPY_BUTTON_MARK}]`)).forEach(
+      (node) => node.remove()
+    )
+
+    Array.from(element.querySelectorAll("script")).forEach((node) =>
+      node.remove()
+    )
+  }
+
+  private async collectImageBlobs(root: HTMLElement): Promise<Blob[]> {
+    const sources = Array.from(
+      root.querySelectorAll<HTMLAnchorElement>(
+        "[data-qa=message_file_image_thumbnail]"
+      )
+    ).reduce<Set<string>>((set, anchor) => {
+      return anchor.href ? set.add(anchor.href) : set
+    }, new Set<string>())
+
+    const blobs = await Promise.all(
+      Array.from(sources).map((src) => this.fetchImageBlob(src))
+    )
+
+    return blobs.filter((blob): blob is Blob => Boolean(blob))
+  }
+
+  private async fetchImageBlob(src: string): Promise<Blob | null> {
+    return fetch(src, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) {
+          this.log("Failed to fetch image for clipboard", src, response.status)
+          return null
+        }
+
+        const blob = await response.blob()
+        if (blob.type && !blob.type.startsWith("image/")) {
+          this.log("Skipping non-image blob", src, blob.type)
+          return null
+        }
+
+        return blob
+      })
+      .catch((error) => {
+        this.log("Error fetching image for clipboard", src, error)
+        return null
+      })
+  }
+
+  private async tryRichClipboard(
+    payload: ClipboardPayload
+  ): Promise<RichClipboardResult> {
+    const clipboardItemCtor = (
+      window as Window & { ClipboardItem?: typeof ClipboardItem }
+    ).ClipboardItem
+
+    if (
+      !clipboardItemCtor ||
+      typeof navigator.clipboard?.write !== "function"
+    ) {
+      this.log("Rich clipboard APIs not available")
+      return { success: false }
+    }
+
+    const attempts =
+      payload.imageBlobs.length > 0
+        ? [payload, { ...payload, imageBlobs: [] }]
+        : [payload]
+
+    for (const attempt of attempts) {
+      const prepared = this.prepareClipboardData(attempt)
+      if (!prepared) {
+        continue
+      }
+
+      const success = await navigator.clipboard
+        .write([new clipboardItemCtor(prepared.data)])
+        .then(() => true)
+        .catch((error) => {
+          this.log("navigator.clipboard.write failed", error)
+          return false
+        })
+
+      if (success) {
+        this.log("navigator.clipboard.write succeeded", {
+          text: prepared.textIncluded,
+          html: prepared.htmlIncluded,
+          images: prepared.imagesIncluded
+        })
+        return {
+          success: true,
+          textIncluded: prepared.textIncluded,
+          htmlIncluded: prepared.htmlIncluded,
+          imagesIncluded: prepared.imagesIncluded
+        }
       }
     }
-  }
 
-  const fallbackText = root.innerText.trim()
-  return fallbackText || null
-}
-
-function extractMessageHtml(root: HTMLElement): string | null {
-  const contentNode =
-    MESSAGE_TEXT_SELECTORS.reduce<HTMLElement | null>((acc, selector) => {
-      return acc ?? root.querySelector<HTMLElement>(selector)
-    }, null) ?? root
-
-  const clone = contentNode.cloneNode(true) as HTMLElement
-  cleanupClone(clone)
-
-  const html = clone.innerHTML.trim()
-  return html || null
-}
-
-function cleanupClone(element: HTMLElement): void {
-  element.removeAttribute(COPY_BUTTON_MARK)
-  element.querySelectorAll(`[${COPY_BUTTON_MARK}]`).forEach((node) => {
-    node.remove()
-  })
-
-  element.querySelectorAll("script").forEach((node) => node.remove())
-}
-
-async function collectImageBlobs(
-  root: HTMLElement,
-  log: Logger
-): Promise<Blob[]> {
-  const anchors = Array.from(
-    root.querySelectorAll<HTMLAnchorElement>(
-      "[data-qa=message_file_image_thumbnail]"
-    )
-  )
-  const sources = Array.from(
-    new Set(
-      anchors
-        .map((image) => image.href)
-        .filter((src): src is string => Boolean(src))
-    )
-  )
-
-  if (!sources.length) {
-    return []
-  }
-
-  log("Found image elements to copy", sources)
-  const blobs = await Promise.all(
-    sources.map(async (src) => {
-      const blob = await fetchImageBlob(src, log)
-      return blob
-    })
-  )
-
-  return blobs.filter((blob): blob is Blob => Boolean(blob))
-}
-
-async function fetchImageBlob(src: string, log: Logger): Promise<Blob | null> {
-  try {
-    const response = await fetch(src, {
-      credentials: "include"
-    })
-    if (!response.ok) {
-      log("Failed to fetch image for clipboard", src, response.status)
-      return null
-    }
-
-    const blob = await response.blob()
-    if (blob.type && !blob.type.startsWith("image/")) {
-      log("Skipping non-image blob", src, blob.type)
-      return null
-    }
-
-    return blob
-  } catch (error) {
-    log("Error fetching image for clipboard", src, error)
-    return null
-  }
-}
-
-async function tryRichClipboardCopy(
-  payload: ClipboardPayload,
-  log: Logger
-): Promise<RichClipboardResult> {
-  const clipboardItemCtor = (
-    window as Window & {
-      ClipboardItem?: typeof ClipboardItem
-    }
-  ).ClipboardItem
-
-  if (!clipboardItemCtor || typeof navigator.clipboard?.write !== "function") {
-    log("Rich clipboard APIs not available")
     return { success: false }
   }
 
-  const attempts: ClipboardPayload[] =
-    payload.imageBlobs.length > 0
-      ? [payload, { ...payload, imageBlobs: [] }]
-      : [payload]
-
-  for (const attempt of attempts) {
-    const prepared = prepareClipboardItemData(attempt, log)
-    if (!prepared) {
-      continue
+  private prepareClipboardData(
+    payload: ClipboardPayload
+  ): PreparedClipboardData | null {
+    type Entry = {
+      mime: string
+      blob: Blob
+      flag?: "text" | "html"
     }
 
-    try {
-      await navigator.clipboard.write([new clipboardItemCtor(prepared.data)])
-      log("navigator.clipboard.write succeeded", {
-        text: prepared.textIncluded,
-        html: prepared.htmlIncluded,
-        images: prepared.imagesIncluded
+    const baseEntries = [
+      payload.text
+        ? {
+            mime: "text/plain",
+            blob: new Blob([payload.text], { type: "text/plain" }),
+            flag: "text" as const
+          }
+        : null,
+      payload.html
+        ? {
+            mime: "text/html",
+            blob: new Blob([payload.html], { type: "text/html" }),
+            flag: "html" as const
+          }
+        : null
+    ].filter((entry): entry is Entry => Boolean(entry))
+
+    const initial: PreparedClipboardAccumulator = {
+      data: {},
+      textIncluded: false,
+      htmlIncluded: false,
+      imagesIncluded: 0,
+      usedImageTypes: new Set<string>()
+    }
+
+    const withBase = baseEntries.reduce<PreparedClipboardAccumulator>(
+      (acc, entry) => ({
+        ...acc,
+        data: { ...acc.data, [entry.mime]: entry.blob },
+        textIncluded: acc.textIncluded || entry.flag === "text",
+        htmlIncluded: acc.htmlIncluded || entry.flag === "html"
+      }),
+      initial
+    )
+
+    const withImages = payload.imageBlobs.reduce<PreparedClipboardAccumulator>(
+      (acc, blob) => {
+        const mime =
+          blob.type && blob.type.startsWith("image/") ? blob.type : "image/png"
+        if (acc.usedImageTypes.has(mime)) {
+          this.log("Skipping duplicate clipboard image type", mime)
+          return acc
+        }
+
+        const usedImageTypes = new Set(acc.usedImageTypes)
+        usedImageTypes.add(mime)
+
+        return {
+          ...acc,
+          data: { ...acc.data, [mime]: blob },
+          imagesIncluded: acc.imagesIncluded + 1,
+          usedImageTypes
+        }
+      },
+      withBase
+    )
+
+    const { usedImageTypes: _ignored, ...result } = withImages
+    return result.textIncluded || result.htmlIncluded || result.imagesIncluded
+      ? result
+      : null
+  }
+
+  private async copyPlainText(text: string): Promise<boolean> {
+    return navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        this.log("navigator.clipboard.writeText succeeded")
+        return true
       })
-      return {
-        success: true,
-        textIncluded: prepared.textIncluded,
-        htmlIncluded: prepared.htmlIncluded,
-        imagesIncluded: prepared.imagesIncluded
+      .catch((error) => {
+        this.log("navigator.clipboard.writeText failed, falling back", error)
+        return this.legacyCopy(text)
+      })
+  }
+
+  private legacyCopy(text: string): boolean {
+    const textarea = document.createElement("textarea")
+    textarea.value = text
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+
+    const success = (() => {
+      try {
+        return document.execCommand("copy")
+      } catch (error) {
+        this.log("document.execCommand copy failed", error)
+        return false
       }
-    } catch (error) {
-      log("navigator.clipboard.write failed", error)
-      continue
-    }
+    })()
+
+    textarea.remove()
+    return success
   }
-
-  return { success: false }
-}
-
-type PreparedClipboardData = {
-  data: Record<string, Blob>
-  textIncluded: boolean
-  htmlIncluded: boolean
-  imagesIncluded: number
-}
-
-function prepareClipboardItemData(
-  payload: ClipboardPayload,
-  log: Logger
-): PreparedClipboardData | null {
-  const data: Record<string, Blob> = {}
-  let textIncluded = false
-  let htmlIncluded = false
-  let imagesIncluded = 0
-
-  if (payload.text) {
-    textIncluded = true
-    data["text/plain"] = new Blob([payload.text], { type: "text/plain" })
-  }
-
-  if (payload.html) {
-    htmlIncluded = true
-    data["text/html"] = new Blob([payload.html], { type: "text/html" })
-  }
-
-  const usedImageTypes = new Set<string>()
-  payload.imageBlobs.forEach((blob) => {
-    const mimeType =
-      blob.type && blob.type.startsWith("image/") ? blob.type : "image/png"
-    if (usedImageTypes.has(mimeType)) {
-      log("Skipping duplicate clipboard image type", mimeType)
-      return
-    }
-    usedImageTypes.add(mimeType)
-    data[mimeType] = blob
-    imagesIncluded += 1
-  })
-
-  if (!textIncluded && !htmlIncluded && imagesIncluded === 0) {
-    return null
-  }
-
-  return {
-    data,
-    textIncluded,
-    htmlIncluded,
-    imagesIncluded
-  }
-}
-
-async function copyPlainText(text: string, log: Logger): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    log("navigator.clipboard.writeText succeeded")
-    return true
-  } catch (error) {
-    log("navigator.clipboard.writeText failed, falling back", error)
-  }
-
-  return legacyCopy(text, log)
-}
-
-function legacyCopy(text: string, log: Logger): boolean {
-  const textarea = document.createElement("textarea")
-  textarea.value = text
-  textarea.style.position = "fixed"
-  textarea.style.opacity = "0"
-  document.body.appendChild(textarea)
-  textarea.focus()
-  textarea.select()
-
-  let success = false
-  try {
-    success = document.execCommand("copy")
-    log("document.execCommand copy result", success)
-  } catch (error) {
-    log("document.execCommand copy failed", error)
-    success = false
-  }
-
-  textarea.remove()
-  return success
 }

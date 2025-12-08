@@ -1,10 +1,11 @@
-import { copyMessageContent } from "./copy"
+import { MessageCopier } from "./copy"
 import { CopyIcon } from "./icons"
 import type { Logger } from "./logger"
 
 export class CopyButton {
   public readonly element: HTMLButtonElement
   public readonly icon = new CopyIcon()
+  private readonly copier: MessageCopier
 
   constructor(
     private readonly container: HTMLElement,
@@ -12,6 +13,7 @@ export class CopyButton {
   ) {
     const button = this.createElement()
     this.element = button
+    this.copier = new MessageCopier(this.log)
     this.element.addEventListener("click", (event) => this.handleClick(event))
   }
 
@@ -33,7 +35,7 @@ export class CopyButton {
       return
     }
 
-    const result = await copyMessageContent(messageRoot, this.log)
+    const result = await this.copier.copy(messageRoot)
     this.log("Copy attempt finished", result)
     if (result.success) {
       this.icon.setFilled(true)
