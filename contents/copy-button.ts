@@ -33,6 +33,9 @@ export class CopyButton {
     const messageRoot = this.findMessageRoot(this.container)
     if (!messageRoot) {
       this.log("No message root found", this.container)
+      this.popover.setText(
+        "Uh oh, something went wrong trying to copy this message."
+      )
       return
     }
 
@@ -41,6 +44,10 @@ export class CopyButton {
     if (result.success) {
       this.popover.setText("Copied to clipboard")
       this.icon.setFilled(true)
+    } else {
+      this.popover.setText(
+        "There was an error when copying this message, please try again"
+      )
     }
   }
 
