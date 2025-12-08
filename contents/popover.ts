@@ -1,4 +1,5 @@
 import { assertElement, parseElement } from "./element"
+import { onNodeRemoved } from "./lib/on-node-removed"
 
 export function html(
   strings: TemplateStringsArray,
@@ -51,6 +52,7 @@ export class Popover {
   private popoverText = assertElement(
     this.popoverElement.querySelector("[data-qa=tooltip-text]")
   )
+  private visible = false
 
   constructor(
     readonly element: HTMLElement,
@@ -62,12 +64,19 @@ export class Popover {
   }
 
   show() {
-    document.body.append(this.popoverRoot)
-    this.updatePosition()
+    if (!this.visible) {
+      document.body.append(this.popoverRoot)
+      onNodeRemoved(this.element, () => this.hide())
+      this.updatePosition()
+      this.visible = true
+    }
   }
 
   hide() {
-    this.popoverRoot.remove()
+    if (this.visible) {
+      this.popoverRoot.remove()
+      this.visible = false
+    }
   }
 
   private updatePosition() {
