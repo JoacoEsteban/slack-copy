@@ -16,6 +16,21 @@ export type CopyResult = {
   usedRichClipboard: boolean
 }
 
+type ClipboardPayload = {
+  text: string | null
+  html: string | null
+  imageBlobs: Blob[]
+}
+
+type RichClipboardResult =
+  | {
+      success: true
+      textIncluded: boolean
+      htmlIncluded: boolean
+      imagesIncluded: number
+    }
+  | { success: false }
+
 export async function copyMessageContent(
   messageRoot: HTMLElement,
   log: Logger
@@ -25,16 +40,16 @@ export async function copyMessageContent(
   const html = extractMessageHtml(messageRoot)
   const imageBlobs = await collectImageBlobs(messageRoot, log)
 
-  const richCopySucceeded = await tryRichClipboardCopy(
+  const richCopyResult = await tryRichClipboardCopy(
     { text, html, imageBlobs },
     log
   )
 
-  if (richCopySucceeded) {
+  if (richCopyResult.success) {
     return {
       success: true,
-      textCopied: Boolean(text),
-      imagesCopied: imageBlobs.length,
+      textCopied: richCopyResult.textIncluded || richCopyResult.htmlIncluded,
+      imagesCopied: richCopyResult.imagesIncluded,
       usedRichClipboard: true
     }
   }
@@ -151,13 +166,9 @@ async function fetchImageBlob(src: string, log: Logger): Promise<Blob | null> {
 }
 
 async function tryRichClipboardCopy(
-  payload: {
-    text: string | null
-    html: string | null
-    imageBlobs: Blob[]
-  },
+  payload: ClipboardPayload,
   log: Logger
-): Promise<boolean> {
+): Promise<RichClipboardResult> {
   const clipboardItemCtor = (
     window as Window & {
       ClipboardItem?: typeof ClipboardItem
@@ -166,48 +177,90 @@ async function tryRichClipboardCopy(
 
   if (!clipboardItemCtor || typeof navigator.clipboard?.write !== "function") {
     log("Rich clipboard APIs not available")
-    return false
+    return { success: false }
   }
 
-  const clipboardItems: ClipboardItem[] = []
+  const attempts: ClipboardPayload[] =
+    payload.imageBlobs.length > 0
+      ? [payload, { ...payload, imageBlobs: [] }]
+      : [payload]
 
-  if (payload.text || payload.html) {
-    const data: Record<string, Blob> = {}
-    if (payload.text) {
-      data["text/plain"] = new Blob([payload.text], { type: "text/plain" })
+  for (const attempt of attempts) {
+    const prepared = prepareClipboardItemData(attempt, log)
+    if (!prepared) {
+      continue
     }
 
-    if (payload.html) {
-      data["text/html"] = new Blob([payload.html], { type: "text/html" })
-    }
-
-    clipboardItems.push(new clipboardItemCtor(data))
-  }
-
-  payload.imageBlobs.forEach((blob) => {
-    const mimeType = blob.type || "image/png"
-    clipboardItems.push(
-      new clipboardItemCtor({
-        [mimeType]: blob
+    try {
+      await navigator.clipboard.write([new clipboardItemCtor(prepared.data)])
+      log("navigator.clipboard.write succeeded", {
+        text: prepared.textIncluded,
+        html: prepared.htmlIncluded,
+        images: prepared.imagesIncluded
       })
-    )
+      return {
+        success: true,
+        textIncluded: prepared.textIncluded,
+        htmlIncluded: prepared.htmlIncluded,
+        imagesIncluded: prepared.imagesIncluded
+      }
+    } catch (error) {
+      log("navigator.clipboard.write failed", error)
+      continue
+    }
+  }
+
+  return { success: false }
+}
+
+type PreparedClipboardData = {
+  data: Record<string, Blob>
+  textIncluded: boolean
+  htmlIncluded: boolean
+  imagesIncluded: number
+}
+
+function prepareClipboardItemData(
+  payload: ClipboardPayload,
+  log: Logger
+): PreparedClipboardData | null {
+  const data: Record<string, Blob> = {}
+  let textIncluded = false
+  let htmlIncluded = false
+  let imagesIncluded = 0
+
+  if (payload.text) {
+    textIncluded = true
+    data["text/plain"] = new Blob([payload.text], { type: "text/plain" })
+  }
+
+  if (payload.html) {
+    htmlIncluded = true
+    data["text/html"] = new Blob([payload.html], { type: "text/html" })
+  }
+
+  const usedImageTypes = new Set<string>()
+  payload.imageBlobs.forEach((blob) => {
+    const mimeType =
+      blob.type && blob.type.startsWith("image/") ? blob.type : "image/png"
+    if (usedImageTypes.has(mimeType)) {
+      log("Skipping duplicate clipboard image type", mimeType)
+      return
+    }
+    usedImageTypes.add(mimeType)
+    data[mimeType] = blob
+    imagesIncluded += 1
   })
 
-  if (!clipboardItems.length) {
-    return false
+  if (!textIncluded && !htmlIncluded && imagesIncluded === 0) {
+    return null
   }
 
-  try {
-    await navigator.clipboard.write(clipboardItems)
-    log("navigator.clipboard.write succeeded", {
-      text: Boolean(payload.text),
-      html: Boolean(payload.html),
-      images: payload.imageBlobs.length
-    })
-    return true
-  } catch (error) {
-    log("navigator.clipboard.write failed", error)
-    return false
+  return {
+    data,
+    textIncluded,
+    htmlIncluded,
+    imagesIncluded
   }
 }
 
