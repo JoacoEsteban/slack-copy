@@ -1,21 +1,28 @@
 import { IconsStatic, type IconName, type Icons } from "~assets/icons-static"
 
-import { parseNode } from "./element"
+import { assertElement, parseNode } from "./element"
+import { html } from "./lib/template"
 
 export class Icon<T extends IconName> {
   readonly icon: Icons[T]
+  readonly node: HTMLElement
+
   constructor(readonly iconName: T) {
     this.icon = IconsStatic.icons[iconName]
+    this.node = assertElement(parseNode(this.getSvg()))
   }
 
   getSvg() {
-    return `<svg
-        data-i0m="true"
-        data-qa="add-reaction"
-        aria-hidden="true"
-        viewBox="0 0 20 20"
-        class=""
-    >
+    if ("svg" in this.icon) {
+      return this.icon.svg
+    }
+
+    return html`<svg
+      data-i0m="true"
+      data-qa="${this.iconName}"
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      class="">
       ${this.icon.body}
     </svg>`
   }

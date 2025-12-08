@@ -19,7 +19,7 @@ export function parseElement(html: string) {
 
 export function assertElement(node?: Node | null) {
   if (!node) throw new Error("Node is null")
-  if (!(node instanceof HTMLElement)) {
+  if (!(node instanceof HTMLElement || node instanceof SVGElement)) {
     console.log(node)
     throw new Error("Node is not an HTMLElement")
   }

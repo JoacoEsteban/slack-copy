@@ -4541,6 +4541,48 @@ export const IconsStatic = {
         fill-rule="evenodd"
         d="M3 9a6 6 0 1 1 12 0A6 6 0 0 1 3 9m6-7.5a7.5 7.5 0 1 0 4.746 13.307l3.474 3.473a.75.75 0 1 0 1.06-1.06l-3.473-3.473A7.5 7.5 0 0 0 9 1.5m3 8.25a.75.75 0 0 0 0-1.5H6a.75.75 0 0 0 0 1.5z"
         clip-rule="evenodd" />`
+    },
+    "loading-spinner": {
+      svg: html`<svg
+        width="24"
+        height="24"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        xmlns="http://www.w3.org/2000/svg">
+        <style>
+          .spinner_V8m1 {
+            transform-origin: center;
+            animation: spinner_zKoa 2s linear infinite;
+          }
+          .spinner_V8m1 circle {
+            stroke-linecap: round;
+            animation: spinner_YpZS 1.5s ease-in-out infinite;
+          }
+          @keyframes spinner_zKoa {
+            100% {
+              transform: rotate(360deg);
+            }
+          }
+          @keyframes spinner_YpZS {
+            0% {
+              stroke-dasharray: 0 150;
+              stroke-dashoffset: 0;
+            }
+            47.5% {
+              stroke-dasharray: 42 150;
+              stroke-dashoffset: -16;
+            }
+            95%,
+            100% {
+              stroke-dasharray: 42 150;
+              stroke-dashoffset: -59;
+            }
+          }
+        </style>
+        <g class="spinner_V8m1">
+          <circle cx="12" cy="12" r="9.5" fill="none" stroke-width="3"></circle>
+        </g>
+      </svg>`
     }
   },
   width: 20,
