@@ -1,22 +1,42 @@
+import { match } from "ts-pattern"
+
 import { COPY_BUTTON_MARK } from "./constants"
 import { mapFind } from "./lib/map-find"
 import type { Logger } from "./logger"
 
 const MESSAGE_TEXT_SELECTORS = [
-  '[data-qa="message-text"]',
+  // '[data-qa="message-text"]',
   '[data-qa="message_content"]',
   '[data-qa="message-body"]',
   ".c-message_kit__text",
   ".p-rich_text_section"
 ]
-const EDITED_LABEL_SELECTOR = ".c-message__edited_label"
 
-export type CopyResult = {
-  success: boolean
-  textCopied: boolean
-  imagesCopied: number
-  usedRichClipboard: boolean
-}
+const EDITED_LABEL_SELECTOR = ".c-message__edited_label"
+const FILE_META_SELECTOR = ".c-message_kit__file__meta"
+const SENDER_SELECTOR = "[data-qa=message_sender]"
+const TIMESTAMP_SELECTOR = "[data-qa=timestamp_label]"
+
+const CLEANUP_SELECTORS = [
+  `[${COPY_BUTTON_MARK}]`,
+  "script",
+  EDITED_LABEL_SELECTOR,
+  FILE_META_SELECTOR,
+  SENDER_SELECTOR,
+  TIMESTAMP_SELECTOR
+]
+
+export type CopyResult =
+  | {
+      success: true
+      textCopied: boolean
+      imagesCopied: number
+      usedRichClipboard: boolean
+    }
+  | {
+      success: false
+      error: "no-message-root" | "no-content" | "no-text" | "unknown"
+    }
 
 type ClipboardPayload = {
   text: string | null
@@ -57,26 +77,29 @@ export class MessageCopier {
         success: true,
         textCopied: richResult.textIncluded || richResult.htmlIncluded,
         imagesCopied: richResult.imagesIncluded,
-        usedRichClipboard: true
+        usedRichClipboard: richResult.htmlIncluded
       }
     }
 
     if (payload.text) {
       const textOnlySuccess = await this.copyPlainText(payload.text)
-      return {
-        success: textOnlySuccess,
-        textCopied: textOnlySuccess,
-        imagesCopied: 0,
-        usedRichClipboard: false
-      }
+      return match<boolean, CopyResult>(textOnlySuccess)
+        .with(false, () => ({
+          success: false,
+          error: "no-text"
+        }))
+        .otherwise(() => ({
+          success: true,
+          textCopied: true,
+          imagesCopied: 0,
+          usedRichClipboard: false
+        }))
     }
 
     this.log("No copyable content found")
     return {
       success: false,
-      textCopied: false,
-      imagesCopied: 0,
-      usedRichClipboard: false
+      error: "no-content"
     }
   }
 
@@ -98,6 +121,9 @@ export class MessageCopier {
   private extractMessageHtml(root: HTMLElement): string | null {
     const clone = this.cloneForProcessing(this.selectMessageContent(root))
     const html = clone.innerHTML.trim()
+    const text = clone.innerText.trim()
+    this.log(clone, text, text.length > 0)
+
     return html || null
   }
 
@@ -124,17 +150,10 @@ export class MessageCopier {
   private cleanupClone(element: HTMLElement): void {
     element.removeAttribute(COPY_BUTTON_MARK)
 
-    Array.from(element.querySelectorAll(`[${COPY_BUTTON_MARK}]`)).forEach(
-      (node) => node.remove()
-    )
-
-    Array.from(element.querySelectorAll("script")).forEach((node) =>
-      node.remove()
-    )
-
-    Array.from(element.querySelectorAll(EDITED_LABEL_SELECTOR)).forEach(
-      (node) => node.remove()
-    )
+    CLEANUP_SELECTORS.map((selector) => element.querySelectorAll(selector))
+      .map((nodes) => Array.from(nodes))
+      .flat()
+      .forEach((node) => node.remove())
   }
 
   private async collectImageBlobs(root: HTMLElement): Promise<Blob[]> {
@@ -196,6 +215,7 @@ export class MessageCopier {
         : [payload]
 
     for (const attempt of attempts) {
+      this.log("Preparing clipboard data for", attempt)
       const prepared = this.prepareClipboardData(attempt)
       if (!prepared) {
         continue
@@ -253,26 +273,26 @@ export class MessageCopier {
         : null
     ].filter((entry): entry is Entry => Boolean(entry))
 
-    const initial: PreparedClipboardAccumulator = {
-      data: {},
-      textIncluded: false,
-      htmlIncluded: false,
+    const withBase: PreparedClipboardAccumulator = {
+      data: baseEntries.reduce<Record<string, Blob>>(
+        (acc, entry) => ({ ...acc, [entry.mime]: entry.blob }),
+        {}
+      ),
+      textIncluded: baseEntries.some((entry) => entry.flag === "text"),
+      htmlIncluded: baseEntries.some((entry) => entry.flag === "html"),
       imagesIncluded: 0,
       usedImageTypes: new Set<string>()
     }
 
-    const withBase = baseEntries.reduce<PreparedClipboardAccumulator>(
-      (acc, entry) => ({
-        ...acc,
-        data: { ...acc.data, [entry.mime]: entry.blob },
-        textIncluded: acc.textIncluded || entry.flag === "text",
-        htmlIncluded: acc.htmlIncluded || entry.flag === "html"
-      }),
-      initial
-    )
-
-    const withImages = payload.imageBlobs.reduce<PreparedClipboardAccumulator>(
-      (acc, blob) => {
+    const imageEntries = payload.imageBlobs.reduce(
+      (
+        acc: {
+          data: Record<string, Blob>
+          usedImageTypes: Set<string>
+          count: number
+        },
+        blob
+      ) => {
         const mime =
           blob.type && blob.type.startsWith("image/") ? blob.type : "image/png"
         if (acc.usedImageTypes.has(mime)) {
@@ -284,14 +304,25 @@ export class MessageCopier {
         usedImageTypes.add(mime)
 
         return {
-          ...acc,
           data: { ...acc.data, [mime]: blob },
-          imagesIncluded: acc.imagesIncluded + 1,
-          usedImageTypes
+          usedImageTypes,
+          count: acc.count + 1
         }
       },
-      withBase
+      {
+        data: {},
+        usedImageTypes: new Set(withBase.usedImageTypes),
+        count: 0
+      }
     )
+
+    const withImages: PreparedClipboardAccumulator = {
+      data: { ...withBase.data, ...imageEntries.data },
+      textIncluded: withBase.textIncluded,
+      htmlIncluded: withBase.htmlIncluded,
+      imagesIncluded: imageEntries.count,
+      usedImageTypes: imageEntries.usedImageTypes
+    }
 
     const { usedImageTypes: _ignored, ...result } = withImages
     return result.textIncluded || result.htmlIncluded || result.imagesIncluded
