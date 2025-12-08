@@ -1,9 +1,5 @@
-import { Icon } from "~assets/icons-static"
-
+import { CopyIcon } from "./icons"
 import type { Logger } from "./logger"
-
-const textCopyIcon = new Icon("copy")
-const textCopiedIcon = new Icon("copy-filled")
 
 const MESSAGE_TEXT_SELECTORS = [
   '[data-qa="message-text"]',
@@ -17,23 +13,23 @@ export const COPY_BUTTON_MARK = "data-slack-copy-button"
 
 export class CopyButton {
   public readonly element: HTMLButtonElement
+  public readonly icon = new CopyIcon()
 
   constructor(
     private readonly container: HTMLElement,
     private readonly log: Logger
   ) {
-    this.element = this.createElement()
+    const button = this.createElement()
+    this.element = button
     this.element.addEventListener("click", (event) => this.handleClick(event))
   }
 
-  private createElement(): HTMLButtonElement {
+  private createElement() {
     const button = document.createElement("button")
     button.type = "button"
-    // button.setAttribute("aria-label", "Copy message text")
-    // button.setAttribute("data-sk", "tooltip_parent")
     button.className =
       "c-button-unstyled c-icon_button c-icon_button--size_small c-message_actions__button c-icon_button--default"
-    button.innerHTML = textCopyIcon.getSvg()
+    button.appendChild(this.icon.svg)
     return button
   }
 
@@ -48,7 +44,9 @@ export class CopyButton {
 
     const success = await this.copyToClipboard(messageText)
     this.log("Copy attempt finished", { success, messageText })
-    this.element.innerHTML = textCopiedIcon.getSvg()
+    if (success) {
+      this.icon.setFilled(true)
+    }
   }
 
   private extractMessageText(container: HTMLElement): string | null {
