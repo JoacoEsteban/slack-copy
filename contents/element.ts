@@ -26,3 +26,20 @@ export function assertElement(node?: Node | null) {
 
   return node as HTMLElement
 }
+
+export function getAttributes(node: Element) {
+  return node.getAttributeNames().reduce((acc, name) => {
+    acc.set(name, node.getAttribute(name) || "")
+    return acc
+  }, new Map<string, string>())
+}
+
+export function setAttributes(
+  node: HTMLElement,
+  attributes: Map<string, string>
+) {
+  attributes.forEach((value, name) => {
+    if (!node.hasAttribute(name)) node.setAttribute(name, value)
+  })
+  return node
+}

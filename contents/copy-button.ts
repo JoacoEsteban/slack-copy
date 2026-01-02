@@ -9,6 +9,7 @@ import {
 import { match, P } from "ts-pattern"
 
 import { MessageCopier, type CopyResult } from "./copy"
+import { getAttributes, setAttributes } from "./element"
 import { CopyIcon, Icon } from "./icons"
 import { getResultMessage } from "./lib/messages"
 import { noop } from "./lib/misc"
@@ -17,8 +18,9 @@ import { Popover } from "./popover"
 
 export class CopyButton {
   public readonly element: HTMLButtonElement
-  public readonly icon = new CopyIcon()
-  public readonly loadingIcon = new Icon("loading-spinner")
+  public readonly icon
+  public readonly loadingIcon
+
   private readonly copier: MessageCopier
   private readonly popover: Popover
   private readonly copying$$ = new BehaviorSubject(false)
@@ -28,7 +30,12 @@ export class CopyButton {
     private readonly container: HTMLElement,
     private readonly log: Logger
   ) {
+    const { buttonAttributes, svgAttributes } = this.getSiblingAttributes()
+    this.icon = new CopyIcon(svgAttributes)
+    this.loadingIcon = new Icon("loading-spinner", svgAttributes)
+
     const button = this.createElement()
+    setAttributes(button, buttonAttributes)
     this.popover = new Popover(button, "Copy")
     this.element = button
     this.copier = new MessageCopier(this.log)
@@ -51,6 +58,27 @@ export class CopyButton {
         )
       )
       .subscribe()
+  }
+
+  private getSiblingAttributes() {
+    const firstSibling = this.container.firstElementChild
+
+    return match(firstSibling)
+      .with(P.instanceOf(Element), (sibling) => {
+        const buttonAttributes = getAttributes(sibling)
+        const svgAttributes = match(sibling.querySelector("svg"))
+          .with(P.instanceOf(Element), getAttributes)
+          .otherwise(() => new Map())
+
+        return {
+          svgAttributes,
+          buttonAttributes
+        }
+      })
+      .otherwise(() => ({
+        svgAttributes: new Map(),
+        buttonAttributes: new Map()
+      }))
   }
 
   private createElement() {
