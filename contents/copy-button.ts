@@ -84,8 +84,7 @@ export class CopyButton {
   private createElement() {
     const button = document.createElement("button")
     button.type = "button"
-    button.className =
-      "c-button-unstyled c-icon_button c-icon_button--size_small c-message_actions__button c-icon_button--default"
+    button.setAttribute("data-qa", "copy_content")
     button.appendChild(this.icon.svg)
     button.appendChild(this.loadingIcon.node)
     this.loadingIcon.node.style.display = "none"
